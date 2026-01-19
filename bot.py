@@ -16,7 +16,8 @@ from aiohttp import web
 # Bot token va admin ID
 API_TOKEN = '8019275951:AAH4bICBI9WfMyyG6rtsFu-QaeVwBUthXvA'
 ADMIN_ID = 6762465157
-BOT_URL = "https://t.me/qulay_reklama_bot"
+BOT_USERNAME = "qulay_reklama_bot"
+BOT_URL = f"https://t.me/{BOT_USERNAME}"
 
 # Botni sozlash
 bot = Bot(token=API_TOKEN)
@@ -63,6 +64,7 @@ class UserStates(StatesGroup):
     waiting_for_channel_invite = State()
     
     # Admin holatlari
+    admin_waiting_for_channel_id = State()
     admin_waiting_for_invite_user_id = State()
     admin_waiting_for_invite_channel_name = State()
 
@@ -209,7 +211,7 @@ async def distribute_advertisement(ad_id):
         cursor.execute('SELECT first_name, username FROM users WHERE user_id = ?', (ad_dict['user_id'],))
         u = cursor.fetchone()
         uname = f" @{u[1]}" if u and u[1] else ""
-        ad_text = f"🎯 **{ad_dict['product_name']}**\n\n📝 *Tavsif:* {ad_dict['product_description']}\n\n📞 *Aloqa:* `{ad_dict['phone_number']}`\n👤 *Reklama beruvchi:* {u[0]}{uname}\n\n━━━━━━━━━━━━━━━━━━━━\n📢 **Reklama berish uchun:** @qulay_reklama_bot\n✨ *Qulay reklama xizmati*\n🔖 #Reklama #Sotuv #Marketplace"
+        ad_text = f"🎯 **{ad_dict['product_name']}**\n\n📝 *Tavsif:* {ad_dict['product_description']}\n\n📞 *Aloqa:* `{ad_dict['phone_number']}`\n👤 *Reklama beruvchi:* {u[0]}{uname}\n\n━━━━━━━━━━━━━━━━━━━━\n📢 **Reklama berish uchun:** @{BOT_USERNAME}\n✨ *Qulay reklama xizmati*\n🔖 #Reklama #Sotuv #Marketplace"
         bot_channels = await get_bot_channels()
         sent_ch = []
         files = json.loads(ad_dict['content_files'])
@@ -315,7 +317,7 @@ async def cmd_start(message: Message):
     await add_user(message.from_user.id, message.from_user.username, message.from_user.first_name, message.from_user.last_name)
     active, _ = await check_tariff_active(message.from_user.id)
     invites = await get_user_channel_invites(message.from_user.id)
-    txt = f"🤖 **@qulay_reklama_bot** - Mukammal reklama platformasi\n\n👋 Assalomu alaykum, {message.from_user.first_name}!\n\n✨ **Bot imkoniyatlari:**\n• 📢 Reklamangiz barcha kanallarimizga va guruhlarimizga va faol foydalanuvchilarimizga yuboriladi\n• 📊 Har bir reklama statistikasini ko'ring\n• ⏳ Tarif davomiyligi: 6 kun\n\n📅 **Tarif holati:** {'✅ Aktiv' if active else '❌ Aktiv emas'}\n\n[Bot manzili]({BOT_URL})"
+    txt = f"🤖 **@{BOT_USERNAME}** - Mukammal reklama platformasi\n\n👋 Assalomu alaykum, {message.from_user.first_name}!\n\n✨ **Bot imkoniyatlari:**\n• 📢 Reklamangiz barcha kanallarimizga va guruhlarimizga va faol foydalanuvchilarimizga yuboriladi\n• 📊 Har bir reklama statistikasini ko'ring\n• ⏳ Tarif davomiyligi: 6 kun\n\n📅 **Tarif holati:** {'✅ Aktiv' if active else '❌ Aktiv emas'}\n\n[Bot manzili]({BOT_URL})"
     if invites: txt += "\n\n🎁 **Sizda kanal takliflari bor!**"
     await message.answer(txt, reply_markup=await main_menu(message.from_user.id), parse_mode="Markdown")
 
@@ -334,10 +336,33 @@ async def admin_panel(c: CallbackQuery):
             
     kb = [
         [InlineKeyboardButton(text="💰 To'lovlar", callback_data="check_payments")],
+        [InlineKeyboardButton(text="📢 Kanal qo'shish (Manual)", callback_data="admin_add_channel")],
         [InlineKeyboardButton(text="🎁 Taklif yaratish", callback_data="admin_create_invite")]
     ]
     await c.message.answer(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
     await c.answer()
+
+@router.callback_query(F.data == "admin_add_channel")
+async def admin_add_channel_start(c: CallbackQuery, state: FSMContext):
+    await c.message.answer("Kanal yoki guruh ID sini yuboring (masalan: -100...):")
+    await state.set_state(UserStates.admin_waiting_for_channel_id)
+    await c.answer()
+
+@router.message(UserStates.admin_waiting_for_channel_id)
+async def admin_add_channel_finalize(m: Message, state: FSMContext):
+    cid = m.text.strip()
+    try:
+        chat = await bot.get_chat(cid)
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO bot_channels (channel_id, channel_name, channel_type, added_date, is_active) VALUES (?, ?, ?, ?, ?)", 
+                       (str(chat.id), chat.title or chat.full_name, chat.type, datetime.now(TASHKENT_TZ).strftime('%Y-%m-%d %H:%M:%S'), 1))
+        conn.commit()
+        conn.close()
+        await m.answer(f"✅ Kanal qo'shildi: {chat.title} ({chat.id})")
+        await state.clear()
+    except Exception as e:
+        await m.answer(f"❌ Xatolik: {e}\nBot kanalga qo'shilgan va admin ekanligiga ishonch hosil qiling.")
 
 @router.callback_query(F.data == "admin_create_invite")
 async def admin_create_invite_start(c: CallbackQuery, state: FSMContext):
